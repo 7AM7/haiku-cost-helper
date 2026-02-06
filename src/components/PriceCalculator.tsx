@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, MessageSquare, FileText, Calculator, AlertTriangle, DollarSign, TrendingDown, Calendar, Clock } from "lucide-react";
+import { Users, MessageSquare, FileText, Calculator, AlertTriangle, DollarSign, TrendingDown, Calendar, Clock, Search } from "lucide-react";
 import { CostBreakdown } from "./CostBreakdown";
 import { PricingExplainer } from "./PricingExplainer";
 
@@ -132,6 +132,7 @@ export function PriceCalculator() {
   const [studentsRange, setStudentsRange] = useState<[number, number]>([300, 600]);
   const [contextTokens, setContextTokens] = useState(2048);
   const [queriesRange, setQueriesRange] = useState<[number, number]>([5, 15]);
+  const [kbLookups, setKbLookups] = useState(4);
   const [outputTokens, setOutputTokens] = useState(200);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("session");
   const [sessionsRange, setSessionsRange] = useState<[number, number]>([3, 7]);
@@ -163,26 +164,41 @@ export function PriceCalculator() {
   }), [studentsRange]);
 
   // Calculate cost for a given number of queries, sessions, and students
+  // Clamp KB lookups to not exceed total queries
+  const effectiveKbLookups = Math.min(kbLookups, queriesRange[1]);
+
   const calculateCost = (numQueries: number, numSessions: number, numStudents: number, isCachingEnabled: boolean) => {
     // Per student per session calculations
     const embedCost = PRICING.embed * embedTokens;
+    const lookupsThisSession = Math.min(effectiveKbLookups, numQueries);
+    const noContextQueries = numQueries - lookupsThisSession;
 
-    const firstQueryCacheOrInput = isCachingEnabled
-      ? PRICING.cacheWrite * contextTokens
-      : PRICING.input * contextTokens;
-    const firstQueryInput = PRICING.input * questionTokens;
-    const firstQueryOutput = PRICING.output * outputTokens;
-    const firstQueryCost = firstQueryCacheOrInput + firstQueryInput + firstQueryOutput;
+    // Queries WITH knowledge base context
+    let kbQueriesCost = 0;
+    if (lookupsThisSession > 0) {
+      // First KB query: cache write (or full input)
+      const firstKbCost = (isCachingEnabled
+        ? PRICING.cacheWrite * contextTokens
+        : PRICING.input * contextTokens)
+        + PRICING.input * questionTokens
+        + PRICING.output * outputTokens;
 
-    const subsequentCacheOrInput = isCachingEnabled
-      ? PRICING.cacheRead * contextTokens
-      : PRICING.input * contextTokens;
-    const subsequentInput = PRICING.input * questionTokens;
-    const subsequentOutput = PRICING.output * outputTokens;
-    const subsequentQueryCost = subsequentCacheOrInput + subsequentInput + subsequentOutput;
+      // Subsequent KB queries: cache read (or full input)
+      const subsequentKbCost = (isCachingEnabled
+        ? PRICING.cacheRead * contextTokens
+        : PRICING.input * contextTokens)
+        + PRICING.input * questionTokens
+        + PRICING.output * outputTokens;
+
+      kbQueriesCost = firstKbCost + (lookupsThisSession - 1) * subsequentKbCost;
+    }
+
+    // Queries WITHOUT knowledge base context (just question + output)
+    const noContextQueryCost = PRICING.input * questionTokens + PRICING.output * outputTokens;
+    const noContextCost = noContextQueries * noContextQueryCost;
 
     // Per student per session cost
-    const perStudentPerSession = embedCost + firstQueryCost + (numQueries - 1) * subsequentQueryCost;
+    const perStudentPerSession = embedCost + kbQueriesCost + noContextCost;
     
     // Per student for selected time period
     const perStudentCost = perStudentPerSession * numSessions;
@@ -190,15 +206,17 @@ export function PriceCalculator() {
     // Total for all students
     const totalCost = perStudentCost * numStudents;
 
-    // Without caching comparison
+    // Without caching comparison (all queries use full context)
     const withoutCachingPerQuery = PRICING.input * (contextTokens + questionTokens) + PRICING.output * outputTokens;
     const withoutCachingPerStudent = (embedCost + withoutCachingPerQuery * numQueries) * numSessions;
     const withoutCachingTotal = withoutCachingPerStudent * numStudents;
     const savings = withoutCachingTotal - totalCost;
 
     // Per-question cost (independent of students/sessions)
-    const perQuestionCached = PRICING.cacheRead * contextTokens + PRICING.input * questionTokens + PRICING.output * outputTokens;
-    const perQuestionUncached = PRICING.input * (contextTokens + questionTokens) + PRICING.output * outputTokens;
+    const perQuestionWithContext = isCachingEnabled
+      ? PRICING.cacheRead * contextTokens + PRICING.input * questionTokens + PRICING.output * outputTokens
+      : PRICING.input * (contextTokens + questionTokens) + PRICING.output * outputTokens;
+    const perQuestionNoContext = PRICING.input * questionTokens + PRICING.output * outputTokens;
 
     return {
       perStudentPerSession,
@@ -206,8 +224,8 @@ export function PriceCalculator() {
       totalCost,
       withoutCachingTotal,
       savings,
-      perQuestionCached,
-      perQuestionUncached,
+      perQuestionWithContext,
+      perQuestionNoContext,
     };
   };
 
@@ -221,6 +239,8 @@ export function PriceCalculator() {
 
     const savingsPercent = (avgCost.savings / avgCost.withoutCachingTotal) * 100;
 
+    const avgKbLookups = Math.min(effectiveKbLookups, queryStats.avg);
+
     return {
       cachingEnabled,
       min: minCost,
@@ -230,13 +250,13 @@ export function PriceCalculator() {
       breakdown: {
         embed: PRICING.embed * embedTokens * studentStats.avg * sessionMultipliers.avg,
         cacheWrite: cachingEnabled ? PRICING.cacheWrite * contextTokens * studentStats.avg * sessionMultipliers.avg : 0,
-        cacheRead: cachingEnabled ? PRICING.cacheRead * contextTokens * (queryStats.avg - 1) * studentStats.avg * sessionMultipliers.avg : 0,
-        inputContext: cachingEnabled ? 0 : PRICING.input * contextTokens * queryStats.avg * studentStats.avg * sessionMultipliers.avg,
+        cacheRead: cachingEnabled && avgKbLookups > 1 ? PRICING.cacheRead * contextTokens * (avgKbLookups - 1) * studentStats.avg * sessionMultipliers.avg : 0,
+        inputContext: cachingEnabled ? 0 : PRICING.input * contextTokens * avgKbLookups * studentStats.avg * sessionMultipliers.avg,
         inputQuestion: PRICING.input * questionTokens * queryStats.avg * studentStats.avg * sessionMultipliers.avg,
         output: PRICING.output * outputTokens * queryStats.avg * studentStats.avg * sessionMultipliers.avg,
       }
     };
-  }, [contextTokens, outputTokens, questionTokens, studentStats, queryStats, sessionMultipliers]);
+  }, [contextTokens, outputTokens, questionTokens, studentStats, queryStats, sessionMultipliers, effectiveKbLookups]);
 
   const currentPeriodLabel = TIME_PERIODS.find(p => p.value === timePeriod)?.label || "Per Session";
 
@@ -329,8 +349,21 @@ export function PriceCalculator() {
                 />
 
                 <InputField
+                  label="Knowledge Base Lookups"
+                  description="How many questions (out of total) require fetching from knowledge base"
+                  value={effectiveKbLookups}
+                  onChange={setKbLookups}
+                  min={0}
+                  max={Math.max(queriesRange[1], 1)}
+                  step={1}
+                  icon={<Search className="h-5 w-5" />}
+                  unit="lookups"
+                  highlight
+                />
+
+                <InputField
                   label="Document Context Size"
-                  description="Size of course materials sent to AI (system prompt + docs)"
+                  description="Tokens retrieved from knowledge base per lookup (system prompt + docs)"
                   value={contextTokens}
                   onChange={setContextTokens}
                   min={0}
@@ -442,15 +475,15 @@ export function PriceCalculator() {
                   <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Cost Per Question</p>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="p-3 bg-primary/5 rounded-lg">
-                      <p className="text-xs text-muted-foreground mb-1">With Caching</p>
+                      <p className="text-xs text-muted-foreground mb-1">With KB Context</p>
                       <p className="text-xl font-bold font-mono text-primary">
-                        {formatCents(costs.avg.perQuestionCached)}
+                        {formatCents(costs.avg.perQuestionWithContext)}
                       </p>
                     </div>
                     <div className="p-3 bg-secondary/50 rounded-lg">
-                      <p className="text-xs text-muted-foreground mb-1">Without Caching</p>
+                      <p className="text-xs text-muted-foreground mb-1">Without KB Context</p>
                       <p className="text-xl font-bold font-mono text-muted-foreground">
-                        {formatCents(costs.avg.perQuestionUncached)}
+                        {formatCents(costs.avg.perQuestionNoContext)}
                       </p>
                     </div>
                   </div>
