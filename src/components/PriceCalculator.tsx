@@ -333,7 +333,7 @@ export function PriceCalculator() {
                   description="Size of course materials sent to AI (system prompt + docs)"
                   value={contextTokens}
                   onChange={setContextTokens}
-                  min={2048}
+                  min={0}
                   max={50000}
                   step={500}
                   icon={<FileText className="h-5 w-5" />}
