@@ -22,11 +22,11 @@ type TimePeriod = "session" | "hour" | "day" | "week" | "month" | "year";
 
 const TIME_PERIODS: { value: TimePeriod; label: string; sessions: number }[] = [
   { value: "session", label: "Per Session", sessions: 1 },
-  { value: "hour", label: "Per Hour", sessions: 4 },
-  { value: "day", label: "Per Day", sessions: 24 },
-  { value: "week", label: "Per Week", sessions: 100 },
-  { value: "month", label: "Per Month", sessions: 400 },
-  { value: "year", label: "Per Year", sessions: 4000 },
+  { value: "hour", label: "Per Hour", sessions: 5 },
+  { value: "day", label: "Per Day", sessions: 5 },
+  { value: "week", label: "Per Week", sessions: 25 },
+  { value: "month", label: "Per Month", sessions: 100 },
+  { value: "year", label: "Per Year", sessions: 1000 },
 ];
 
 interface InputFieldProps {
@@ -79,12 +79,12 @@ function InputField({ label, description, value, onChange, min, max, step, icon,
 }
 
 export function PriceCalculator() {
-  const [numStudents, setNumStudents] = useState(100);
+  const [numStudents, setNumStudents] = useState(600);
   const [contextTokens, setContextTokens] = useState(4096);
   const [numQueries, setNumQueries] = useState(10);
   const [outputTokens, setOutputTokens] = useState(200);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("session");
-  const [sessionsPerPeriod, setSessionsPerPeriod] = useState(1);
+  const [sessionsPerPeriod, setSessionsPerPeriod] = useState(5);
 
   // Fixed reasonable defaults
   const embedTokens = 800;
@@ -221,7 +221,7 @@ export function PriceCalculator() {
                   value={numStudents}
                   onChange={setNumStudents}
                   min={1}
-                  max={1000}
+                  max={5000}
                   step={1}
                   icon={<Users className="h-5 w-5" />}
                   unit="students"
