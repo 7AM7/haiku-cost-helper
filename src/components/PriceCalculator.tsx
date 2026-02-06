@@ -129,7 +129,7 @@ function RangeField({ label, description, valueMin, valueMax, onChange, min, max
 }
 
 export function PriceCalculator() {
-  const [numStudents, setNumStudents] = useState(600);
+  const [studentsRange, setStudentsRange] = useState<[number, number]>([300, 600]);
   const [contextTokens, setContextTokens] = useState(4096);
   const [queriesRange, setQueriesRange] = useState<[number, number]>([5, 15]);
   const [outputTokens, setOutputTokens] = useState(200);
@@ -156,8 +156,14 @@ export function PriceCalculator() {
     avg: (queriesRange[0] + queriesRange[1]) / 2
   }), [queriesRange]);
 
-  // Calculate cost for a given number of queries and sessions
-  const calculateCost = (numQueries: number, numSessions: number, isCachingEnabled: boolean) => {
+  const studentStats = useMemo(() => ({
+    min: studentsRange[0],
+    max: studentsRange[1],
+    avg: (studentsRange[0] + studentsRange[1]) / 2
+  }), [studentsRange]);
+
+  // Calculate cost for a given number of queries, sessions, and students
+  const calculateCost = (numQueries: number, numSessions: number, numStudents: number, isCachingEnabled: boolean) => {
     // Per student per session calculations
     const embedCost = PRICING.embed * embedTokens;
 
@@ -203,9 +209,9 @@ export function PriceCalculator() {
     const cachingEnabled = contextTokens >= MIN_CACHE_TOKENS;
     
     // Calculate min, max, and average costs
-    const minCost = calculateCost(queryStats.min, sessionMultipliers.min, cachingEnabled);
-    const maxCost = calculateCost(queryStats.max, sessionMultipliers.max, cachingEnabled);
-    const avgCost = calculateCost(queryStats.avg, sessionMultipliers.avg, cachingEnabled);
+    const minCost = calculateCost(queryStats.min, sessionMultipliers.min, studentStats.min, cachingEnabled);
+    const maxCost = calculateCost(queryStats.max, sessionMultipliers.max, studentStats.max, cachingEnabled);
+    const avgCost = calculateCost(queryStats.avg, sessionMultipliers.avg, studentStats.avg, cachingEnabled);
 
     const savingsPercent = (avgCost.savings / avgCost.withoutCachingTotal) * 100;
 
@@ -216,15 +222,15 @@ export function PriceCalculator() {
       avg: avgCost,
       savingsPercent,
       breakdown: {
-        embed: PRICING.embed * embedTokens * numStudents * sessionMultipliers.avg,
-        cacheWrite: cachingEnabled ? PRICING.cacheWrite * contextTokens * numStudents * sessionMultipliers.avg : 0,
-        cacheRead: cachingEnabled ? PRICING.cacheRead * contextTokens * (queryStats.avg - 1) * numStudents * sessionMultipliers.avg : 0,
-        inputContext: cachingEnabled ? 0 : PRICING.input * contextTokens * queryStats.avg * numStudents * sessionMultipliers.avg,
-        inputQuestion: PRICING.input * questionTokens * queryStats.avg * numStudents * sessionMultipliers.avg,
-        output: PRICING.output * outputTokens * queryStats.avg * numStudents * sessionMultipliers.avg,
+        embed: PRICING.embed * embedTokens * studentStats.avg * sessionMultipliers.avg,
+        cacheWrite: cachingEnabled ? PRICING.cacheWrite * contextTokens * studentStats.avg * sessionMultipliers.avg : 0,
+        cacheRead: cachingEnabled ? PRICING.cacheRead * contextTokens * (queryStats.avg - 1) * studentStats.avg * sessionMultipliers.avg : 0,
+        inputContext: cachingEnabled ? 0 : PRICING.input * contextTokens * queryStats.avg * studentStats.avg * sessionMultipliers.avg,
+        inputQuestion: PRICING.input * questionTokens * queryStats.avg * studentStats.avg * sessionMultipliers.avg,
+        output: PRICING.output * outputTokens * queryStats.avg * studentStats.avg * sessionMultipliers.avg,
       }
     };
-  }, [contextTokens, outputTokens, numStudents, queryStats, sessionMultipliers]);
+  }, [contextTokens, outputTokens, studentStats, queryStats, sessionMultipliers]);
 
   const currentPeriodLabel = TIME_PERIODS.find(p => p.value === timePeriod)?.label || "Per Session";
 
@@ -290,17 +296,17 @@ export function PriceCalculator() {
                 <CardTitle className="text-lg">Your Setup</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <InputField
+                <RangeField
                   label="Number of Students"
-                  description="How many students will use the AI?"
-                  value={numStudents}
-                  onChange={setNumStudents}
+                  description="Min-max students who will use the AI"
+                  valueMin={studentsRange[0]}
+                  valueMax={studentsRange[1]}
+                  onChange={(min, max) => setStudentsRange([min, max])}
                   min={1}
                   max={5000}
                   step={1}
                   icon={<Users className="h-5 w-5" />}
                   unit="students"
-                  highlight
                 />
 
                 <RangeField
@@ -405,7 +411,7 @@ export function PriceCalculator() {
                   </div>
                   
                   <p className="text-sm text-muted-foreground mt-3">
-                    {numStudents.toLocaleString()} students × {queryStats.min}-{queryStats.max} questions × {sessionMultipliers.min === sessionMultipliers.max ? '1 session' : `${sessionMultipliers.min}-${sessionMultipliers.max} sessions`}
+                    {studentStats.min}-{studentStats.max} students × {queryStats.min}-{queryStats.max} questions × {sessionMultipliers.min === sessionMultipliers.max ? '1 session' : `${sessionMultipliers.min}-${sessionMultipliers.max} sessions`}
                   </p>
                 </div>
               </CardContent>
