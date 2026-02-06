@@ -196,12 +196,18 @@ export function PriceCalculator() {
     const withoutCachingTotal = withoutCachingPerStudent * numStudents;
     const savings = withoutCachingTotal - totalCost;
 
+    // Per-question cost (independent of students/sessions)
+    const perQuestionCached = PRICING.cacheRead * contextTokens + PRICING.input * questionTokens + PRICING.output * outputTokens;
+    const perQuestionUncached = PRICING.input * (contextTokens + questionTokens) + PRICING.output * outputTokens;
+
     return {
       perStudentPerSession,
       perStudentCost,
       totalCost,
       withoutCachingTotal,
       savings,
+      perQuestionCached,
+      perQuestionUncached,
     };
   };
 
@@ -230,7 +236,7 @@ export function PriceCalculator() {
         output: PRICING.output * outputTokens * queryStats.avg * studentStats.avg * sessionMultipliers.avg,
       }
     };
-  }, [contextTokens, outputTokens, studentStats, queryStats, sessionMultipliers]);
+  }, [contextTokens, outputTokens, questionTokens, studentStats, queryStats, sessionMultipliers]);
 
   const currentPeriodLabel = TIME_PERIODS.find(p => p.value === timePeriod)?.label || "Per Session";
 
@@ -253,7 +259,7 @@ export function PriceCalculator() {
         <div className="text-center space-y-3">
           <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-2 rounded-full text-sm font-medium">
             <Calculator className="h-4 w-4" />
-            AI Cost Calculator
+            Endstar AI Cost Calculator
           </div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
             How much will Claude Haiku 4.5 cost?
@@ -425,6 +431,29 @@ export function PriceCalculator() {
                   <p className="text-sm text-muted-foreground mt-3">
                     {studentStats.min}-{studentStats.max} students × {queryStats.min}-{queryStats.max} questions × {sessionMultipliers.min === sessionMultipliers.max ? '1 session' : `${sessionMultipliers.min}-${sessionMultipliers.max} sessions`}
                   </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Cost Per Question */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Cost Per Question</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-3 bg-primary/5 rounded-lg">
+                      <p className="text-xs text-muted-foreground mb-1">With Caching</p>
+                      <p className="text-xl font-bold font-mono text-primary">
+                        {formatCents(costs.avg.perQuestionCached)}
+                      </p>
+                    </div>
+                    <div className="p-3 bg-secondary/50 rounded-lg">
+                      <p className="text-xs text-muted-foreground mb-1">Without Caching</p>
+                      <p className="text-xl font-bold font-mono text-muted-foreground">
+                        {formatCents(costs.avg.perQuestionUncached)}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
