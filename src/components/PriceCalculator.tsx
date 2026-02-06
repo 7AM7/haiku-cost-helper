@@ -135,10 +135,10 @@ export function PriceCalculator() {
   const [outputTokens, setOutputTokens] = useState(200);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("session");
   const [sessionsRange, setSessionsRange] = useState<[number, number]>([3, 7]);
+  const [questionTokens, setQuestionTokens] = useState(200);
 
   // Fixed reasonable defaults
   const embedTokens = 800;
-  const questionTokens = 200;
 
   // Get multiplier based on time period
   const sessionMultipliers = useMemo(() => {
@@ -341,6 +341,18 @@ export function PriceCalculator() {
                   onChange={setOutputTokens}
                   min={50}
                   max={2000}
+                  step={50}
+                  icon={<MessageSquare className="h-5 w-5" />}
+                  unit="tokens"
+                />
+
+                <InputField
+                  label="Question Length"
+                  description="Average length of each student question"
+                  value={questionTokens}
+                  onChange={setQuestionTokens}
+                  min={50}
+                  max={1000}
                   step={50}
                   icon={<MessageSquare className="h-5 w-5" />}
                   unit="tokens"
