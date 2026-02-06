@@ -135,7 +135,7 @@ export function PriceCalculator() {
   const [outputTokens, setOutputTokens] = useState(200);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("session");
   const [sessionsRange, setSessionsRange] = useState<[number, number]>([3, 7]);
-  const [questionTokens, setQuestionTokens] = useState(200);
+  const [questionTokens, setQuestionTokens] = useState(50);
 
   // Fixed reasonable defaults
   const embedTokens = 800;
