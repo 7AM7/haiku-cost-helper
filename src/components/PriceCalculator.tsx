@@ -130,7 +130,7 @@ function RangeField({ label, description, valueMin, valueMax, onChange, min, max
 
 export function PriceCalculator() {
   const [studentsRange, setStudentsRange] = useState<[number, number]>([300, 600]);
-  const [contextTokens, setContextTokens] = useState(4096);
+  const [contextTokens, setContextTokens] = useState(2048);
   const [queriesRange, setQueriesRange] = useState<[number, number]>([5, 15]);
   const [outputTokens, setOutputTokens] = useState(200);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("session");
