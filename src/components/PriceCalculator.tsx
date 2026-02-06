@@ -2,8 +2,8 @@ import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { HelpCircle, Users, MessageSquare, FileText, Calculator, AlertTriangle, DollarSign, TrendingDown } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Users, MessageSquare, FileText, Calculator, AlertTriangle, DollarSign, TrendingDown, Calendar, Clock } from "lucide-react";
 import { CostBreakdown } from "./CostBreakdown";
 import { PricingExplainer } from "./PricingExplainer";
 
@@ -17,6 +17,17 @@ const PRICING = {
 };
 
 const MIN_CACHE_TOKENS = 4096;
+
+type TimePeriod = "session" | "hour" | "day" | "week" | "month" | "year";
+
+const TIME_PERIODS: { value: TimePeriod; label: string; sessions: number }[] = [
+  { value: "session", label: "Per Session", sessions: 1 },
+  { value: "hour", label: "Per Hour", sessions: 4 },
+  { value: "day", label: "Per Day", sessions: 24 },
+  { value: "week", label: "Per Week", sessions: 100 },
+  { value: "month", label: "Per Month", sessions: 400 },
+  { value: "year", label: "Per Year", sessions: 4000 },
+];
 
 interface InputFieldProps {
   label: string;
@@ -72,15 +83,23 @@ export function PriceCalculator() {
   const [contextTokens, setContextTokens] = useState(4096);
   const [numQueries, setNumQueries] = useState(10);
   const [outputTokens, setOutputTokens] = useState(200);
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>("session");
+  const [sessionsPerPeriod, setSessionsPerPeriod] = useState(1);
 
   // Fixed reasonable defaults
   const embedTokens = 800;
   const questionTokens = 200;
 
+  // Get multiplier based on time period
+  const periodMultiplier = useMemo(() => {
+    if (timePeriod === "session") return 1;
+    return sessionsPerPeriod;
+  }, [timePeriod, sessionsPerPeriod]);
+
   const costs = useMemo(() => {
     const cachingEnabled = contextTokens >= MIN_CACHE_TOKENS;
 
-    // Per student calculations
+    // Per student per session calculations
     const embedCost = PRICING.embed * embedTokens;
 
     const firstQueryCacheOrInput = cachingEnabled
@@ -97,15 +116,18 @@ export function PriceCalculator() {
     const subsequentOutput = PRICING.output * outputTokens;
     const subsequentQueryCost = subsequentCacheOrInput + subsequentInput + subsequentOutput;
 
-    // Per student cost
-    const perStudentCost = embedCost + firstQueryCost + (numQueries - 1) * subsequentQueryCost;
+    // Per student per session cost
+    const perStudentPerSession = embedCost + firstQueryCost + (numQueries - 1) * subsequentQueryCost;
+    
+    // Per student for selected time period
+    const perStudentCost = perStudentPerSession * periodMultiplier;
 
     // Total for all students
     const totalCost = perStudentCost * numStudents;
 
     // Without caching comparison
     const withoutCachingPerQuery = PRICING.input * (contextTokens + questionTokens) + PRICING.output * outputTokens;
-    const withoutCachingPerStudent = embedCost + withoutCachingPerQuery * numQueries;
+    const withoutCachingPerStudent = (embedCost + withoutCachingPerQuery * numQueries) * periodMultiplier;
     const withoutCachingTotal = withoutCachingPerStudent * numStudents;
     const savings = withoutCachingTotal - totalCost;
     const savingsPercent = (savings / withoutCachingTotal) * 100;
@@ -113,20 +135,23 @@ export function PriceCalculator() {
     return {
       cachingEnabled,
       perStudentCost,
+      perStudentPerSession,
       totalCost,
       withoutCachingTotal,
       savings,
       savingsPercent,
       breakdown: {
-        embed: embedCost * numStudents,
-        cacheWrite: cachingEnabled ? PRICING.cacheWrite * contextTokens * numStudents : 0,
-        cacheRead: cachingEnabled ? PRICING.cacheRead * contextTokens * (numQueries - 1) * numStudents : 0,
-        inputContext: cachingEnabled ? 0 : PRICING.input * contextTokens * numQueries * numStudents,
-        inputQuestion: PRICING.input * questionTokens * numQueries * numStudents,
-        output: PRICING.output * outputTokens * numQueries * numStudents,
+        embed: embedCost * numStudents * periodMultiplier,
+        cacheWrite: cachingEnabled ? PRICING.cacheWrite * contextTokens * numStudents * periodMultiplier : 0,
+        cacheRead: cachingEnabled ? PRICING.cacheRead * contextTokens * (numQueries - 1) * numStudents * periodMultiplier : 0,
+        inputContext: cachingEnabled ? 0 : PRICING.input * contextTokens * numQueries * numStudents * periodMultiplier,
+        inputQuestion: PRICING.input * questionTokens * numQueries * numStudents * periodMultiplier,
+        output: PRICING.output * outputTokens * numQueries * numStudents * periodMultiplier,
       }
     };
-  }, [contextTokens, outputTokens, numQueries, numStudents]);
+  }, [contextTokens, outputTokens, numQueries, numStudents, periodMultiplier]);
+
+  const currentPeriodLabel = TIME_PERIODS.find(p => p.value === timePeriod)?.label || "Per Session";
 
   const formatDollars = (cost: number) => {
     if (cost < 0.01) return `$${cost.toFixed(4)}`;
@@ -153,8 +178,32 @@ export function PriceCalculator() {
             How much will Claude Haiku 4.5 cost?
           </h1>
           <p className="text-muted-foreground max-w-lg mx-auto text-sm">
-            Estimate your costs for running an AI-powered learning assistant. Adjust the sliders below.
+            Estimate your costs for running an AI-powered learning assistant.
           </p>
+          
+          {/* Time Period Selector */}
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Calendar className="h-4 w-4" />
+              <span>Calculate for:</span>
+            </div>
+            <Select value={timePeriod} onValueChange={(v: TimePeriod) => {
+              setTimePeriod(v);
+              const preset = TIME_PERIODS.find(p => p.value === v);
+              if (preset) setSessionsPerPeriod(preset.sessions);
+            }}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TIME_PERIODS.map((period) => (
+                  <SelectItem key={period.value} value={period.value}>
+                    {period.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {/* Main Grid */}
@@ -214,6 +263,21 @@ export function PriceCalculator() {
                   icon={<MessageSquare className="h-5 w-5" />}
                   unit="tokens"
                 />
+
+                {/* Sessions per period - only show when not "per session" */}
+                {timePeriod !== "session" && (
+                  <InputField
+                    label="Sessions per Student"
+                    description={`How many times each student uses the AI ${timePeriod === "hour" ? "per hour" : timePeriod === "day" ? "per day" : timePeriod === "week" ? "per week" : timePeriod === "month" ? "per month" : "per year"}`}
+                    value={sessionsPerPeriod}
+                    onChange={setSessionsPerPeriod}
+                    min={1}
+                    max={timePeriod === "hour" ? 10 : timePeriod === "day" ? 50 : timePeriod === "week" ? 200 : timePeriod === "month" ? 500 : 5000}
+                    step={1}
+                    icon={<Clock className="h-5 w-5" />}
+                    unit="sessions"
+                  />
+                )}
               </CardContent>
             </Card>
 
@@ -238,7 +302,7 @@ export function PriceCalculator() {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                    Total Cost
+                    Total Cost {currentPeriodLabel}
                   </p>
                   <div className="flex items-baseline justify-center gap-1">
                     <DollarSign className="h-8 w-8 text-primary" />
@@ -249,7 +313,7 @@ export function PriceCalculator() {
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground mt-2">
-                    for {numStudents.toLocaleString()} students × {numQueries} questions each
+                    {numStudents.toLocaleString()} students × {numQueries} questions × {periodMultiplier > 1 ? `${periodMultiplier} sessions` : '1 session'}
                   </p>
                 </div>
               </CardContent>
@@ -260,10 +324,17 @@ export function PriceCalculator() {
               <CardContent className="pt-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="text-center p-3 bg-secondary/50 rounded-lg">
-                    <p className="text-xs text-muted-foreground uppercase mb-1">Per Student</p>
-                    <p className="text-2xl font-bold font-mono text-primary">
-                      {formatCents(costs.perStudentCost)}
+                    <p className="text-xs text-muted-foreground uppercase mb-1">
+                      Per Student {timePeriod !== "session" && currentPeriodLabel.replace("Per ", "/")}
                     </p>
+                    <p className="text-2xl font-bold font-mono text-primary">
+                      {costs.perStudentCost < 0.01 ? formatCents(costs.perStudentCost) : formatDollars(costs.perStudentCost)}
+                    </p>
+                    {timePeriod !== "session" && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        ({formatCents(costs.perStudentPerSession)} per session)
+                      </p>
+                    )}
                   </div>
                   <div className="text-center p-3 bg-accent/10 rounded-lg">
                     <p className="text-xs text-muted-foreground uppercase mb-1">You Save</p>
