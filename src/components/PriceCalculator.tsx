@@ -78,38 +78,97 @@ function InputField({ label, description, value, onChange, min, max, step, icon,
   );
 }
 
+interface RangeFieldProps {
+  label: string;
+  description: string;
+  valueMin: number;
+  valueMax: number;
+  onChange: (min: number, max: number) => void;
+  min: number;
+  max: number;
+  step: number;
+  icon: React.ReactNode;
+  unit?: string;
+}
+
+function RangeField({ label, description, valueMin, valueMax, onChange, min, max, step, icon, unit = "tokens" }: RangeFieldProps) {
+  return (
+    <div className="p-4 rounded-xl bg-secondary/30">
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-primary/10 rounded-lg text-primary">
+            {icon}
+          </div>
+          <div>
+            <Label className="text-base font-semibold">{label}</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+          </div>
+        </div>
+        <div className="text-right">
+          <span className="font-mono text-lg font-bold text-primary">
+            {valueMin} - {valueMax}
+          </span>
+          <span className="text-sm text-muted-foreground ml-1">{unit}</span>
+        </div>
+      </div>
+      <Slider
+        value={[valueMin, valueMax]}
+        onValueChange={(v) => onChange(v[0], v[1])}
+        min={min}
+        max={max}
+        step={step}
+        className="w-full"
+      />
+      <div className="flex justify-between text-xs text-muted-foreground mt-2">
+        <span>{min.toLocaleString()}</span>
+        <span>avg: {Math.round((valueMin + valueMax) / 2)}</span>
+        <span>{max.toLocaleString()}</span>
+      </div>
+    </div>
+  );
+}
+
 export function PriceCalculator() {
   const [numStudents, setNumStudents] = useState(600);
   const [contextTokens, setContextTokens] = useState(4096);
-  const [numQueries, setNumQueries] = useState(10);
+  const [queriesRange, setQueriesRange] = useState<[number, number]>([5, 15]);
   const [outputTokens, setOutputTokens] = useState(200);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("session");
-  const [sessionsPerPeriod, setSessionsPerPeriod] = useState(5);
+  const [sessionsRange, setSessionsRange] = useState<[number, number]>([3, 7]);
 
   // Fixed reasonable defaults
   const embedTokens = 800;
   const questionTokens = 200;
 
   // Get multiplier based on time period
-  const periodMultiplier = useMemo(() => {
-    if (timePeriod === "session") return 1;
-    return sessionsPerPeriod;
-  }, [timePeriod, sessionsPerPeriod]);
+  const sessionMultipliers = useMemo(() => {
+    if (timePeriod === "session") return { min: 1, max: 1, avg: 1 };
+    return { 
+      min: sessionsRange[0], 
+      max: sessionsRange[1], 
+      avg: (sessionsRange[0] + sessionsRange[1]) / 2 
+    };
+  }, [timePeriod, sessionsRange]);
 
-  const costs = useMemo(() => {
-    const cachingEnabled = contextTokens >= MIN_CACHE_TOKENS;
+  const queryStats = useMemo(() => ({
+    min: queriesRange[0],
+    max: queriesRange[1],
+    avg: (queriesRange[0] + queriesRange[1]) / 2
+  }), [queriesRange]);
 
+  // Calculate cost for a given number of queries and sessions
+  const calculateCost = (numQueries: number, numSessions: number, isCachingEnabled: boolean) => {
     // Per student per session calculations
     const embedCost = PRICING.embed * embedTokens;
 
-    const firstQueryCacheOrInput = cachingEnabled
+    const firstQueryCacheOrInput = isCachingEnabled
       ? PRICING.cacheWrite * contextTokens
       : PRICING.input * contextTokens;
     const firstQueryInput = PRICING.input * questionTokens;
     const firstQueryOutput = PRICING.output * outputTokens;
     const firstQueryCost = firstQueryCacheOrInput + firstQueryInput + firstQueryOutput;
 
-    const subsequentCacheOrInput = cachingEnabled
+    const subsequentCacheOrInput = isCachingEnabled
       ? PRICING.cacheRead * contextTokens
       : PRICING.input * contextTokens;
     const subsequentInput = PRICING.input * questionTokens;
@@ -120,36 +179,52 @@ export function PriceCalculator() {
     const perStudentPerSession = embedCost + firstQueryCost + (numQueries - 1) * subsequentQueryCost;
     
     // Per student for selected time period
-    const perStudentCost = perStudentPerSession * periodMultiplier;
+    const perStudentCost = perStudentPerSession * numSessions;
 
     // Total for all students
     const totalCost = perStudentCost * numStudents;
 
     // Without caching comparison
     const withoutCachingPerQuery = PRICING.input * (contextTokens + questionTokens) + PRICING.output * outputTokens;
-    const withoutCachingPerStudent = (embedCost + withoutCachingPerQuery * numQueries) * periodMultiplier;
+    const withoutCachingPerStudent = (embedCost + withoutCachingPerQuery * numQueries) * numSessions;
     const withoutCachingTotal = withoutCachingPerStudent * numStudents;
     const savings = withoutCachingTotal - totalCost;
-    const savingsPercent = (savings / withoutCachingTotal) * 100;
 
     return {
-      cachingEnabled,
-      perStudentCost,
       perStudentPerSession,
+      perStudentCost,
       totalCost,
       withoutCachingTotal,
       savings,
+    };
+  };
+
+  const costs = useMemo(() => {
+    const cachingEnabled = contextTokens >= MIN_CACHE_TOKENS;
+    
+    // Calculate min, max, and average costs
+    const minCost = calculateCost(queryStats.min, sessionMultipliers.min, cachingEnabled);
+    const maxCost = calculateCost(queryStats.max, sessionMultipliers.max, cachingEnabled);
+    const avgCost = calculateCost(queryStats.avg, sessionMultipliers.avg, cachingEnabled);
+
+    const savingsPercent = (avgCost.savings / avgCost.withoutCachingTotal) * 100;
+
+    return {
+      cachingEnabled,
+      min: minCost,
+      max: maxCost,
+      avg: avgCost,
       savingsPercent,
       breakdown: {
-        embed: embedCost * numStudents * periodMultiplier,
-        cacheWrite: cachingEnabled ? PRICING.cacheWrite * contextTokens * numStudents * periodMultiplier : 0,
-        cacheRead: cachingEnabled ? PRICING.cacheRead * contextTokens * (numQueries - 1) * numStudents * periodMultiplier : 0,
-        inputContext: cachingEnabled ? 0 : PRICING.input * contextTokens * numQueries * numStudents * periodMultiplier,
-        inputQuestion: PRICING.input * questionTokens * numQueries * numStudents * periodMultiplier,
-        output: PRICING.output * outputTokens * numQueries * numStudents * periodMultiplier,
+        embed: PRICING.embed * embedTokens * numStudents * sessionMultipliers.avg,
+        cacheWrite: cachingEnabled ? PRICING.cacheWrite * contextTokens * numStudents * sessionMultipliers.avg : 0,
+        cacheRead: cachingEnabled ? PRICING.cacheRead * contextTokens * (queryStats.avg - 1) * numStudents * sessionMultipliers.avg : 0,
+        inputContext: cachingEnabled ? 0 : PRICING.input * contextTokens * queryStats.avg * numStudents * sessionMultipliers.avg,
+        inputQuestion: PRICING.input * questionTokens * queryStats.avg * numStudents * sessionMultipliers.avg,
+        output: PRICING.output * outputTokens * queryStats.avg * numStudents * sessionMultipliers.avg,
       }
     };
-  }, [contextTokens, outputTokens, numQueries, numStudents, periodMultiplier]);
+  }, [contextTokens, outputTokens, numStudents, queryStats, sessionMultipliers]);
 
   const currentPeriodLabel = TIME_PERIODS.find(p => p.value === timePeriod)?.label || "Per Session";
 
@@ -190,7 +265,7 @@ export function PriceCalculator() {
             <Select value={timePeriod} onValueChange={(v: TimePeriod) => {
               setTimePeriod(v);
               const preset = TIME_PERIODS.find(p => p.value === v);
-              if (preset) setSessionsPerPeriod(preset.sessions);
+              if (preset) setSessionsRange([Math.max(1, preset.sessions - 2), preset.sessions + 2]);
             }}>
               <SelectTrigger className="w-[160px]">
                 <SelectValue />
@@ -228,11 +303,12 @@ export function PriceCalculator() {
                   highlight
                 />
 
-                <InputField
+                <RangeField
                   label="Questions per Student"
-                  description="Average questions each student asks per session"
-                  value={numQueries}
-                  onChange={setNumQueries}
+                  description="Min-max questions each student asks per session"
+                  valueMin={queriesRange[0]}
+                  valueMax={queriesRange[1]}
+                  onChange={(min, max) => setQueriesRange([min, max])}
                   min={1}
                   max={50}
                   step={1}
@@ -266,11 +342,12 @@ export function PriceCalculator() {
 
                 {/* Sessions per period - only show when not "per session" */}
                 {timePeriod !== "session" && (
-                  <InputField
+                  <RangeField
                     label="Sessions per Student"
                     description={`How many times each student uses the AI ${timePeriod === "hour" ? "per hour" : timePeriod === "day" ? "per day" : timePeriod === "week" ? "per week" : timePeriod === "month" ? "per month" : "per year"}`}
-                    value={sessionsPerPeriod}
-                    onChange={setSessionsPerPeriod}
+                    valueMin={sessionsRange[0]}
+                    valueMax={sessionsRange[1]}
+                    onChange={(min, max) => setSessionsRange([min, max])}
                     min={1}
                     max={timePeriod === "hour" ? 10 : timePeriod === "day" ? 50 : timePeriod === "week" ? 200 : timePeriod === "month" ? 500 : 5000}
                     step={1}
@@ -302,18 +379,33 @@ export function PriceCalculator() {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                    Total Cost {currentPeriodLabel}
+                    Estimated Cost {currentPeriodLabel}
                   </p>
-                  <div className="flex items-baseline justify-center gap-1">
-                    <DollarSign className="h-8 w-8 text-primary" />
-                    <span className="text-5xl font-bold text-primary font-mono">
-                      {costs.totalCost < 1 
-                        ? costs.totalCost.toFixed(2) 
-                        : costs.totalCost.toFixed(2)}
+                  
+                  {/* Cost Range */}
+                  <div className="flex items-center justify-center gap-2 mb-1">
+                    <span className="text-2xl font-bold text-muted-foreground font-mono">
+                      {formatDollars(costs.min.totalCost)}
+                    </span>
+                    <span className="text-muted-foreground">—</span>
+                    <span className="text-2xl font-bold text-muted-foreground font-mono">
+                      {formatDollars(costs.max.totalCost)}
                     </span>
                   </div>
-                  <p className="text-sm text-muted-foreground mt-2">
-                    {numStudents.toLocaleString()} students × {numQueries} questions × {periodMultiplier > 1 ? `${periodMultiplier} sessions` : '1 session'}
+                  
+                  {/* Average (highlighted) */}
+                  <div className="flex items-baseline justify-center gap-1">
+                    <span className="text-sm text-muted-foreground">avg:</span>
+                    <DollarSign className="h-6 w-6 text-primary" />
+                    <span className="text-4xl font-bold text-primary font-mono">
+                      {costs.avg.totalCost < 1 
+                        ? costs.avg.totalCost.toFixed(2) 
+                        : costs.avg.totalCost.toFixed(2)}
+                    </span>
+                  </div>
+                  
+                  <p className="text-sm text-muted-foreground mt-3">
+                    {numStudents.toLocaleString()} students × {queryStats.min}-{queryStats.max} questions × {sessionMultipliers.min === sessionMultipliers.max ? '1 session' : `${sessionMultipliers.min}-${sessionMultipliers.max} sessions`}
                   </p>
                 </div>
               </CardContent>
@@ -325,16 +417,14 @@ export function PriceCalculator() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="text-center p-3 bg-secondary/50 rounded-lg">
                     <p className="text-xs text-muted-foreground uppercase mb-1">
-                      Per Student {timePeriod !== "session" && currentPeriodLabel.replace("Per ", "/")}
+                      Per Student (avg)
                     </p>
-                    <p className="text-2xl font-bold font-mono text-primary">
-                      {costs.perStudentCost < 0.01 ? formatCents(costs.perStudentCost) : formatDollars(costs.perStudentCost)}
+                    <p className="text-xl font-bold font-mono text-primary">
+                      {costs.avg.perStudentCost < 0.01 ? formatCents(costs.avg.perStudentCost) : formatDollars(costs.avg.perStudentCost)}
                     </p>
-                    {timePeriod !== "session" && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        ({formatCents(costs.perStudentPerSession)} per session)
-                      </p>
-                    )}
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {formatCents(costs.min.perStudentCost)} - {formatCents(costs.max.perStudentCost)}
+                    </p>
                   </div>
                   <div className="text-center p-3 bg-accent/10 rounded-lg">
                     <p className="text-xs text-muted-foreground uppercase mb-1">You Save</p>
@@ -351,21 +441,21 @@ export function PriceCalculator() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <TrendingDown className="h-4 w-4" />
-                  Cost Comparison
+                  Cost Comparison (using averages)
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">With caching:</span>
-                  <span className="font-mono font-bold text-primary">{formatDollars(costs.totalCost)}</span>
+                  <span className="font-mono font-bold text-primary">{formatDollars(costs.avg.totalCost)}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Without caching:</span>
-                  <span className="font-mono text-muted-foreground line-through">{formatDollars(costs.withoutCachingTotal)}</span>
+                  <span className="font-mono text-muted-foreground line-through">{formatDollars(costs.avg.withoutCachingTotal)}</span>
                 </div>
                 <div className="border-t pt-3 flex justify-between items-center">
                   <span className="text-sm font-medium">Your savings:</span>
-                  <span className="font-mono font-bold text-accent">{formatDollars(costs.savings)}</span>
+                  <span className="font-mono font-bold text-accent">{formatDollars(costs.avg.savings)}</span>
                 </div>
               </CardContent>
             </Card>
@@ -374,7 +464,7 @@ export function PriceCalculator() {
             <CostBreakdown 
               breakdown={costs.breakdown} 
               cachingEnabled={costs.cachingEnabled}
-              totalCost={costs.totalCost}
+              totalCost={costs.avg.totalCost}
             />
           </div>
         </div>
